@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"strconv"
 )
@@ -17,6 +16,7 @@ type Command struct {
 
 func (c *Command) Complete(line string) []string {
 	if c.complete != nil {
+		//fmt.Printf("\nSearching: \"%v\"\n", line)
 		return c.complete(line)
 	}
 	return []string{}
@@ -105,12 +105,4 @@ func convertStringToType(t reflect.Type, strVal string) (reflect.Value, error) {
 		return result, errors.New("Unsupported kind: " + t.Kind().String())
 	}
 	return result, nil
-}
-
-type commandError struct {
-	err string
-}
-
-func (e *commandError) Error() string {
-	return fmt.Sprintf("%s", e.err)
 }

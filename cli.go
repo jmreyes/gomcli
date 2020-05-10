@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,30 +11,46 @@ import (
 	"github.com/peterh/liner"
 )
 
+var ErrPromptAborted = errors.New("prompt aborted")
+var ErrCommandNotFound = errors.New("command not found")
+var ErrCannotParseLine = errors.New("cannot parse line")
+
 type CLIConf struct {
-	Prompt   string
-	Banner   string
-	HistFile string
+	Prompt      string
+	Banner      string
+	HistFile    string
+	CtrlCAborts bool
 }
 
 type CLI struct {
 	lr       *liner.State
 	prompt   string
 	banner   string
+	histfile string
 	commands map[string]Command
 }
 
 func NewSecCLI(conf CLIConf) *CLI {
 	cli := &CLI{}
 	cli.lr = liner.NewLiner()
-	cli.lr.SetCtrlCAborts(true)
 	cli.prompt = conf.Prompt
-	cli.banner = conf.Banner
+	if cli.prompt != "" {
+		cli.prompt = conf.Prompt
+	} else {
+		cli.prompt = "gomcli > "
+	}
+	if cli.banner != "" {
+		cli.banner = conf.Banner
+	}
+	cli.lr.SetCtrlCAborts(conf.CtrlCAborts)
 	cli.commands = make(map[string]Command)
 
-	cli.setupHistory(conf.HistFile)
-	cli.lr.SetCompleter(func(line string) (c []string) {
-		return cli.complete(line)
+	cli.lr.SetTabCompletionStyle(liner.TabPrints)
+
+	cli.histfile = conf.HistFile
+	cli.setupHistory()
+	cli.lr.SetWordCompleter(func(line string, pos int) (head string, c []string, tail string) {
+		return cli.complete(line, pos)
 	})
 
 	return cli
@@ -43,8 +60,15 @@ func (cli *CLI) AddCommand(command Command) {
 	cli.commands[command.name] = command
 }
 
-func (cli *CLI) setupHistory(path string) {
-	dirName := filepath.Dir(path)
+func (cli *CLI) setupHistory() {
+	if f, err := os.Open(cli.histfile); err == nil {
+		cli.lr.ReadHistory(f)
+		f.Close()
+	}
+}
+
+func (cli *CLI) writeHistory() {
+	dirName := filepath.Dir(cli.histfile)
 	if _, err := os.Stat(dirName); err != nil {
 		err := os.MkdirAll(dirName, os.ModePerm)
 		if err != nil {
@@ -52,30 +76,38 @@ func (cli *CLI) setupHistory(path string) {
 		}
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
+	if f, err := os.Create(cli.histfile); err != nil {
 		panic(err)
+	} else {
+		cli.lr.WriteHistory(f)
+		f.Close()
 	}
-	cli.lr.ReadHistory(f)
 }
 
 func (cli *CLI) parseLine(line string) ([]string, error) {
 	res, err := shlex.Split(line)
 	if err != nil {
-		return nil, &commandError{err: fmt.Sprintf("Can't parse line: %s", line)}
+		return nil, ErrCannotParseLine
 	}
 	return res, nil
 }
 
-func (cli *CLI) complete(line string) []string {
+func (cli *CLI) complete(line string, pos int) (head string, c []string, tail string) {
 	if len(line) > 0 {
-		cmd, _ := cli.parseLine(line)
-		command, _ := cli.getCommand(cmd[0])
-		if command != nil {
-			return command.Complete(line)
+		tokens, _ := cli.parseLine(line[:pos])
+		tail = line[pos:]
+		for i := len(tokens); i > 0; i-- {
+			chunk := strings.Join(tokens[:i], " ")
+			if cmd, err := cli.getCommand(chunk); err == nil {
+				if i == len(tokens) {
+					return line, cmd.Complete(""), tail
+				}
+				search := tokens[i]
+				return cmd.name + " ", cmd.Complete(search), tail
+			}
 		}
 	}
-	return cli.rawCommandCompleter(line)
+	return head, cli.rawCommandCompleter(line), tail
 }
 
 func (cli *CLI) ContextualComplete() []string {
@@ -87,19 +119,19 @@ func (cli *CLI) ContextualComplete() []string {
 }
 
 func (cli *CLI) rawCommandCompleter(line string) (res []string) {
-	for _, command := range cli.ContextualComplete() {
-		if strings.HasPrefix(command, line) {
-			res = append(res, command)
+	for _, cmd := range cli.ContextualComplete() {
+		if strings.HasPrefix(cmd, line) {
+			res = append(res, cmd)
 		}
 	}
 	return
 }
 
 func (cli *CLI) getCommand(name string) (*Command, error) {
-	if command, ok := cli.commands[name]; ok {
-		return &command, nil
+	if cmd, ok := cli.commands[name]; ok {
+		return &cmd, nil
 	}
-	return nil, &commandError{err: fmt.Sprintf("Unknown command: %s", name)}
+	return nil, ErrCommandNotFound
 }
 
 func (cli *CLI) process() error {
@@ -113,12 +145,15 @@ func (cli *CLI) process() error {
 		if len(tokens) == 0 {
 			return nil
 		}
-		if command, err := cli.getCommand(tokens[0]); err == nil {
-			cli.lr.AppendHistory(userInput)
-			if len(tokens) > 1 {
-				command.Execute(tokens[1:]...)
-			} else {
-				command.Execute()
+		for i := len(tokens); i > 0; i-- {
+			chunk := strings.Join(tokens[:i], " ")
+			if cmd, err := cli.getCommand(chunk); err == nil {
+				cli.lr.AppendHistory(userInput)
+				if len(tokens) > 1 {
+					cmd.Execute(tokens[i:]...)
+				} else {
+					cmd.Execute()
+				}
 			}
 		}
 	}
@@ -129,15 +164,15 @@ func splitInlineCommands(userInput string) {
 
 }
 
-func (cli *CLI) Start() {
+func (cli *CLI) Start() error {
 	fmt.Printf(cli.banner)
+	defer cli.lr.Close()
+	defer cli.writeHistory()
 
 	for {
 		err := cli.process()
 		if err == liner.ErrPromptAborted {
-			break
+			return ErrPromptAborted
 		}
 	}
-
-	cli.lr.Close()
 }
