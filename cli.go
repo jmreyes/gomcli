@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/shlex"
+	"github.com/anmitsu/go-shlex"
 	"github.com/peterh/liner"
 )
 
@@ -81,16 +81,8 @@ func (cli *CLI) writeHistory() {
 	}
 }
 
-func (cli *CLI) parseLine(line string) ([]string, error) {
-	res, err := shlex.Split(line)
-	if err != nil {
-		return nil, ErrCliCannotParseLine
-	}
-	return res, nil
-}
-
 func (cli *CLI) complete(line string, pos int) (head string, c []string, tail string) {
-	tokens, _ := cli.parseLine(line[:pos])
+	tokens, _ := shlex.Split(line[:pos], false)
 	tail = line[pos:]
 	for i := len(tokens); i > 0; i-- {
 		chunk := strings.Join(tokens[:i], " ")
@@ -134,14 +126,32 @@ func (cli *CLI) process() error {
 	if err != nil {
 		return err
 	}
-	// TODO _split_inline_commands
-	tokens, err := cli.parseLine(userInput)
+
+	lines, err := cli.splitInlineCommands(userInput)
 	if err != nil {
 		return err
 	}
+
+	for _, line := range lines {
+		err := cli.processLine(line)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (cli *CLI) processLine(line string) error {
+	tokens, err := shlex.Split(line, true)
+	if err != nil {
+		return err
+	}
+
 	if len(tokens) == 0 {
 		return nil
 	}
+
 	for i := len(tokens); i > 0; i-- {
 		chunk := strings.Join(tokens[:i], " ")
 		cmd, err := cli.getCommand(chunk)
@@ -149,17 +159,12 @@ func (cli *CLI) process() error {
 			continue
 		}
 
-		cli.lr.AppendHistory(userInput)
+		cli.lr.AppendHistory(line)
 
 		if len(tokens) > 1 {
-			err = cmd.Execute(tokens[i:]...)
-		} else {
-			err = cmd.Execute()
+			return cmd.Execute(tokens[i:]...)
 		}
-		if err != nil {
-			return err
-		}
-		return nil
+		return cmd.Execute()
 	}
 
 	if cli.notFoundHandler != nil {
@@ -168,8 +173,37 @@ func (cli *CLI) process() error {
 	return err
 }
 
-func splitInlineCommands(userInput string) {
+func (cli *CLI) splitInlineCommands(userInput string) ([]string, error) {
+	parsed, err := shlex.Split(userInput, false)
+	if err != nil {
+		return nil, err
+	}
 
+	lines := []string{}
+	command := []string{}
+
+	for i := 0; i < len(parsed); i++ {
+		element := parsed[i]
+		if len(element) > 1 && element[len(element)-2:] == "\\;" {
+			command = append(command, element)
+		} else if len(element) > 1 && element[len(element)-2:] == ";;" {
+			return nil, ErrCliCannotParseLine
+		} else if element[len(element)-1:] == ";" {
+			if element[:len(element)-1] != "" {
+				command = append(command, element[:len(element)-1])
+			}
+			lines = append(lines, strings.Join(command, " "))
+			command = []string{}
+		} else {
+			command = append(command, element)
+		}
+	}
+
+	if len(command) > 0 {
+		lines = append(lines, strings.Join(command, " "))
+	}
+
+	return lines, nil
 }
 
 func (cli *CLI) Start() error {
