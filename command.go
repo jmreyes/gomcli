@@ -1,4 +1,4 @@
-package main
+package gomcli
 
 import (
 	"errors"
@@ -16,29 +16,28 @@ type Completer func(string) []string
 type ErrHandler func(Command, error) error
 
 type Command struct {
-	name       string
-	function   interface{}
-	complete   Completer
-	errHandler ErrHandler
+	Name       string
+	Function   interface{}
+	Completer  Completer
+	ErrHandler ErrHandler
 }
 
 func (c *Command) Complete(line string) []string {
-	if c.complete != nil {
-		//fmt.Printf("\nSearching: \"%v\"\n", line)
-		return c.complete(line)
+	if c.Completer != nil {
+		return c.Completer(line)
 	}
 	return []string{}
 }
 
 func (c *Command) AttachCompleter(completer Completer) {
-	c.complete = completer
+	c.Completer = completer
 }
 
 func (c *Command) handleErr(err error) error {
-	if c.errHandler == nil {
+	if c.ErrHandler == nil {
 		return err
 	}
-	retErr := c.errHandler(*c, err)
+	retErr := c.ErrHandler(*c, err)
 	if retErr != nil {
 		return retErr
 	}
@@ -46,11 +45,11 @@ func (c *Command) handleErr(err error) error {
 }
 
 func (c *Command) Execute(args ...string) error {
-	if c.function == nil {
+	if c.Function == nil {
 		panic("Execute requires a function!")
 	}
 
-	v := reflect.ValueOf(c.function)
+	v := reflect.ValueOf(c.Function)
 	if v.Kind() != reflect.Func {
 		panic("Execute requires a function!")
 	}
@@ -88,7 +87,7 @@ func (c *Command) Execute(args ...string) error {
 	return nil
 }
 
-// Borrowed from https://stackoverflow.com/questions/39891689/how-to-convert-a-string-value-to-the-correct-reflect-kind-in-go
+// Borrowed from https://stackoverflow.com/q/39891689
 func convertStringToType(t reflect.Type, strVal string) (reflect.Value, error) {
 	result := reflect.Indirect(reflect.New(t))
 	switch t.Kind() {

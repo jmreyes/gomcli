@@ -1,4 +1,4 @@
-package main
+package gomcli
 
 import (
 	"errors"
@@ -16,10 +16,11 @@ var ErrCliCannotParseLine = errors.New("cannot parse line")
 
 type NotFoundHandler func(string) error
 
-type CLIConf struct {
-	Prompt      string
-	HistFile    string
-	CtrlCAborts bool
+type Conf struct {
+	Prompt          string
+	HistFile        string
+	CtrlCAborts     bool
+	NotFoundHandler NotFoundHandler
 }
 
 type CLI struct {
@@ -30,44 +31,44 @@ type CLI struct {
 	notFoundHandler NotFoundHandler
 }
 
-func NewSecCLI(conf CLIConf) (*CLI, error) {
+func New(conf Conf) *CLI {
 	cli := &CLI{}
 	cli.lr = liner.NewLiner()
+
 	cli.prompt = conf.Prompt
 	if cli.prompt == "" {
 		cli.prompt = "gomcli > "
 	}
+
 	cli.lr.SetCtrlCAborts(conf.CtrlCAborts)
-	cli.commands = make(map[string]Command)
-
 	cli.lr.SetTabCompletionStyle(liner.TabPrints)
-
-	cli.histfile = conf.HistFile
-	err := cli.setupHistory()
-	if err != nil {
-		return nil, err
-	}
 	cli.lr.SetWordCompleter(cli.complete)
 
-	return cli, nil
+	cli.notFoundHandler = conf.NotFoundHandler
+
+	cli.histfile = conf.HistFile
+	cli.setupHistory()
+
+	cli.commands = make(map[string]Command)
+
+	return cli
 }
 
 func (cli *CLI) AddCommand(command Command) {
-	cli.commands[command.name] = command
+	cli.commands[command.Name] = command
 }
 
-func (cli *CLI) setupHistory() error {
+func (cli *CLI) setupHistory() {
 	if cli.histfile == "" {
-		return nil
+		return
 	}
 
 	f, err := os.Open(cli.histfile)
 	if err != nil {
-		return err
+		return
 	}
 	cli.lr.ReadHistory(f)
 	f.Close()
-	return nil
 }
 
 func (cli *CLI) writeHistory() error {
@@ -103,7 +104,7 @@ func (cli *CLI) complete(line string, pos int) (head string, c []string, tail st
 				return line, cmd.Complete(""), tail
 			}
 			search := tokens[i]
-			return cmd.name + " ", cmd.Complete(search), tail
+			return cmd.Name + " ", cmd.Complete(search), tail
 		}
 	}
 	return head, cli.rawCommandCompleter(line), tail
@@ -247,6 +248,6 @@ func (cli *CLI) Start() error {
 }
 
 func (cli *CLI) End() {
-	cli.lr.Close()
 	cli.writeHistory()
+	cli.lr.Close()
 }
