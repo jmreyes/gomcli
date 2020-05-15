@@ -6,12 +6,20 @@ import (
 	"strconv"
 )
 
+var ErrCmdMissingArgs = errors.New("missing arguments")
+var ErrCmdArgIntOverflow = errors.New("Int value too big")
+var ErrCmdArgUIntOverflow = errors.New("UInt value too big")
+var ErrCmdArgUnsupportedKind = errors.New("Unsupported kind")
+
 type Completer func(string) []string
 
+type ErrHandler func(Command, error) error
+
 type Command struct {
-	name     string
-	function interface{}
-	complete Completer
+	name       string
+	function   interface{}
+	complete   Completer
+	errHandler ErrHandler
 }
 
 func (c *Command) Complete(line string) []string {
@@ -26,9 +34,20 @@ func (c *Command) AttachCompleter(completer Completer) {
 	c.complete = completer
 }
 
-func (c *Command) Execute(args ...string) {
+func (c *Command) handleErr(err error) error {
+	if c.errHandler == nil {
+		return err
+	}
+	retErr := c.errHandler(*c, err)
+	if retErr != nil {
+		return retErr
+	}
+	return nil
+}
+
+func (c *Command) Execute(args ...string) error {
 	if c.function == nil {
-		return
+		panic("Execute requires a function!")
 	}
 
 	v := reflect.ValueOf(c.function)
@@ -38,25 +57,35 @@ func (c *Command) Execute(args ...string) {
 
 	t := v.Type()
 	ni := t.NumIn()
-	if len(args) < ni {
-		panic("Arguments missing!")
+
+	argsLen := len(args)
+	if argsLen < ni {
+		err := c.handleErr(ErrCmdMissingArgs)
+		if err != nil {
+			return err
+		}
 	}
 
 	var argTypes []reflect.Type
 	for i := 0; i < ni; i++ {
 		argTypes = append(argTypes, t.In(i))
 	}
-	//no := t.NumOut()
 
 	var values []reflect.Value
 	for i, arg := range args[:ni] {
 		argValue, err := convertStringToType(argTypes[i], arg)
 		if err != nil {
-			return
+			err = c.handleErr(err)
+			if err != nil {
+				return err
+			}
 		}
 		values = append(values, argValue)
 	}
+
 	v.Call(values)
+
+	return nil
 }
 
 // Borrowed from https://stackoverflow.com/questions/39891689/how-to-convert-a-string-value-to-the-correct-reflect-kind-in-go
@@ -69,7 +98,7 @@ func convertStringToType(t reflect.Type, strVal string) (reflect.Value, error) {
 			return result, err
 		}
 		if result.OverflowInt(val) {
-			return result, errors.New("Int value too big: " + strVal)
+			return result, ErrCmdArgIntOverflow
 		}
 		result.SetInt(val)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
@@ -78,7 +107,7 @@ func convertStringToType(t reflect.Type, strVal string) (reflect.Value, error) {
 			return result, err
 		}
 		if result.OverflowUint(val) {
-			return result, errors.New("UInt value too big: " + strVal)
+			return result, ErrCmdArgUIntOverflow
 		}
 		result.SetUint(val)
 	case reflect.Float32:
@@ -102,7 +131,7 @@ func convertStringToType(t reflect.Type, strVal string) (reflect.Value, error) {
 		}
 		result.SetBool(val)
 	default:
-		return result, errors.New("Unsupported kind: " + t.Kind().String())
+		return result, ErrCmdArgUnsupportedKind
 	}
 	return result, nil
 }

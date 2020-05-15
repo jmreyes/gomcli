@@ -11,9 +11,11 @@ import (
 	"github.com/peterh/liner"
 )
 
-var ErrPromptAborted = errors.New("prompt aborted")
-var ErrCommandNotFound = errors.New("command not found")
-var ErrCannotParseLine = errors.New("cannot parse line")
+var ErrCliPromptAborted = errors.New("prompt aborted")
+var ErrCliCommandNotFound = errors.New("command not found")
+var ErrCliCannotParseLine = errors.New("cannot parse line")
+
+type NotFoundHandler func(string) error
 
 type CLIConf struct {
 	Prompt      string
@@ -23,25 +25,22 @@ type CLIConf struct {
 }
 
 type CLI struct {
-	lr       *liner.State
-	prompt   string
-	banner   string
-	histfile string
-	commands map[string]Command
+	lr              *liner.State
+	prompt          string
+	banner          string
+	histfile        string
+	commands        map[string]Command
+	notFoundHandler NotFoundHandler
 }
 
 func NewSecCLI(conf CLIConf) *CLI {
 	cli := &CLI{}
 	cli.lr = liner.NewLiner()
 	cli.prompt = conf.Prompt
-	if cli.prompt != "" {
-		cli.prompt = conf.Prompt
-	} else {
+	if cli.prompt == "" {
 		cli.prompt = "gomcli > "
 	}
-	if cli.banner != "" {
-		cli.banner = conf.Banner
-	}
+	cli.banner = conf.Banner
 	cli.lr.SetCtrlCAborts(conf.CtrlCAborts)
 	cli.commands = make(map[string]Command)
 
@@ -49,9 +48,7 @@ func NewSecCLI(conf CLIConf) *CLI {
 
 	cli.histfile = conf.HistFile
 	cli.setupHistory()
-	cli.lr.SetWordCompleter(func(line string, pos int) (head string, c []string, tail string) {
-		return cli.complete(line, pos)
-	})
+	cli.lr.SetWordCompleter(cli.complete)
 
 	return cli
 }
@@ -87,24 +84,22 @@ func (cli *CLI) writeHistory() {
 func (cli *CLI) parseLine(line string) ([]string, error) {
 	res, err := shlex.Split(line)
 	if err != nil {
-		return nil, ErrCannotParseLine
+		return nil, ErrCliCannotParseLine
 	}
 	return res, nil
 }
 
 func (cli *CLI) complete(line string, pos int) (head string, c []string, tail string) {
-	if len(line) > 0 {
-		tokens, _ := cli.parseLine(line[:pos])
-		tail = line[pos:]
-		for i := len(tokens); i > 0; i-- {
-			chunk := strings.Join(tokens[:i], " ")
-			if cmd, err := cli.getCommand(chunk); err == nil {
-				if i == len(tokens) {
-					return line, cmd.Complete(""), tail
-				}
-				search := tokens[i]
-				return cmd.name + " ", cmd.Complete(search), tail
+	tokens, _ := cli.parseLine(line[:pos])
+	tail = line[pos:]
+	for i := len(tokens); i > 0; i-- {
+		chunk := strings.Join(tokens[:i], " ")
+		if cmd, err := cli.getCommand(chunk); err == nil {
+			if i == len(tokens) {
+				return line, cmd.Complete(""), tail
 			}
+			search := tokens[i]
+			return cmd.name + " ", cmd.Complete(search), tail
 		}
 	}
 	return head, cli.rawCommandCompleter(line), tail
@@ -131,31 +126,44 @@ func (cli *CLI) getCommand(name string) (*Command, error) {
 	if cmd, ok := cli.commands[name]; ok {
 		return &cmd, nil
 	}
-	return nil, ErrCommandNotFound
+	return nil, ErrCliCommandNotFound
 }
 
 func (cli *CLI) process() error {
 	userInput, err := cli.lr.Prompt(cli.prompt)
-	if err == nil {
-		// TODO _split_inline_commands
-		tokens, err := cli.parseLine(userInput)
+	if err != nil {
+		return err
+	}
+	// TODO _split_inline_commands
+	tokens, err := cli.parseLine(userInput)
+	if err != nil {
+		return err
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+	for i := len(tokens); i > 0; i-- {
+		chunk := strings.Join(tokens[:i], " ")
+		cmd, err := cli.getCommand(chunk)
+		if err != nil {
+			continue
+		}
+
+		cli.lr.AppendHistory(userInput)
+
+		if len(tokens) > 1 {
+			err = cmd.Execute(tokens[i:]...)
+		} else {
+			err = cmd.Execute()
+		}
 		if err != nil {
 			return err
 		}
-		if len(tokens) == 0 {
-			return nil
-		}
-		for i := len(tokens); i > 0; i-- {
-			chunk := strings.Join(tokens[:i], " ")
-			if cmd, err := cli.getCommand(chunk); err == nil {
-				cli.lr.AppendHistory(userInput)
-				if len(tokens) > 1 {
-					cmd.Execute(tokens[i:]...)
-				} else {
-					cmd.Execute()
-				}
-			}
-		}
+		return nil
+	}
+
+	if cli.notFoundHandler != nil {
+		err = cli.notFoundHandler(tokens[0])
 	}
 	return err
 }
@@ -165,14 +173,19 @@ func splitInlineCommands(userInput string) {
 }
 
 func (cli *CLI) Start() error {
-	fmt.Printf(cli.banner)
 	defer cli.lr.Close()
 	defer cli.writeHistory()
 
+	fmt.Printf(cli.banner)
+
 	for {
-		err := cli.process()
-		if err == liner.ErrPromptAborted {
-			return ErrPromptAborted
+		if err := cli.process(); err != nil {
+			switch err {
+			case liner.ErrPromptAborted:
+				return ErrCliPromptAborted
+			default:
+				return err
+			}
 		}
 	}
 }
