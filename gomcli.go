@@ -101,16 +101,16 @@ func (cli *CLI) complete(line string, pos int) (head string, c []string, tail st
 		chunk := strings.Join(tokens[:i], " ")
 		if cmd, err := cli.getCommand(chunk); err == nil {
 			if i == len(tokens) {
-				return line, cmd.Complete(""), tail
+				return line, cmd.complete(""), tail
 			}
 			search := tokens[i]
-			return cmd.Name + " ", cmd.Complete(search), tail
+			return cmd.Name + " ", cmd.complete(search), tail
 		}
 	}
 	return head, cli.rawCommandCompleter(line), tail
 }
 
-func (cli *CLI) ContextualComplete() []string {
+func (cli *CLI) contextualComplete() []string {
 	keys := make([]string, 0, len(cli.commands))
 	for k := range cli.commands {
 		keys = append(keys, k)
@@ -119,7 +119,7 @@ func (cli *CLI) ContextualComplete() []string {
 }
 
 func (cli *CLI) rawCommandCompleter(line string) (res []string) {
-	for _, cmd := range cli.ContextualComplete() {
+	for _, cmd := range cli.contextualComplete() {
 		if strings.HasPrefix(cmd, line) {
 			res = append(res, cmd)
 		}
@@ -180,9 +180,9 @@ func (cli *CLI) processLine(line string) error {
 		}
 
 		if len(tokens) > 1 {
-			return cmd.Execute(tokens[i:]...)
+			return cmd.execute(tokens[i:]...)
 		}
-		return cmd.Execute()
+		return cmd.execute()
 	}
 
 	if cli.notFoundHandler != nil {

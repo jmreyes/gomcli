@@ -22,15 +22,11 @@ type Command struct {
 	ErrHandler ErrHandler
 }
 
-func (c *Command) Complete(line string) []string {
+func (c *Command) complete(line string) []string {
 	if c.Completer != nil {
 		return c.Completer(line)
 	}
 	return []string{}
-}
-
-func (c *Command) AttachCompleter(completer Completer) {
-	c.Completer = completer
 }
 
 func (c *Command) handleErr(err error) error {
@@ -44,7 +40,7 @@ func (c *Command) handleErr(err error) error {
 	return nil
 }
 
-func (c *Command) Execute(args ...string) error {
+func (c *Command) execute(args ...string) error {
 	if c.Function == nil {
 		panic("Execute requires a function!")
 	}
