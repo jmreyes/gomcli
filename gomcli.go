@@ -1,3 +1,5 @@
+// Package gomcli provides a library to build interactive CLI interfaces in the
+// style of msfconsole and riposte.
 package gomcli
 
 import (
@@ -12,15 +14,15 @@ import (
 
 // ErrCliPromptAborted is returned from Start or StartWithInput when the
 // user presses Ctrl-C, if CtrlCAborts was set to true in the Conf struct.
-var ErrCliPromptAborted = errors.New("prompt aborted")
+var ErrCliPromptAborted = errors.New("Prompt aborted")
 
 // ErrCliCannotParseLine is returned from Start or StartWithInput if the
 // input provided could not be be parsed to form command and arguments.
-var ErrCliCannotParseLine = errors.New("cannot parse line")
+var ErrCliCannotParseLine = errors.New("Cannot parse line")
 
 // ErrCliCommandNotFound is passed to the notFoundHandler function if the input
 // provided does not match any known command.
-var ErrCliCommandNotFound = errors.New("command not found")
+var ErrCliCommandNotFound = errors.New("Command not found")
 
 // NotFoundHandler is a function that indicates gomcli how to handle input
 // that does not match any known Command. If not set, default action is to ignore
