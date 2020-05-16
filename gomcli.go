@@ -22,11 +22,14 @@ var ErrCliCannotParseLine = errors.New("cannot parse line")
 // provided does not match any known command.
 var ErrCliCommandNotFound = errors.New("command not found")
 
-// NotFoundHandler indicates gomcli how to handle unknown commands. If not set,
-// unknown commands will be ignored. An error can be returned, that will be
-// propagated so that the Start function returns it.
+// NotFoundHandler is a function that indicates gomcli how to handle input
+// that does not match any known Command. If not set, default action is to ignore
+// it. An error can be returned, that will be propagated so that it is returned
+// by Start.
 type NotFoundHandler func(string) error
 
+// GomCLI represents the state of the command-line interface, and is the main
+// object to interact with within your program.
 type GomCLI struct {
 	lr              *liner.State
 	prompt          string
@@ -35,6 +38,10 @@ type GomCLI struct {
 	notFoundHandler NotFoundHandler
 }
 
+// New initializes a new *GomCLI with sane defaults. Further configuration is
+// to be performed via the setters. The terminal is set to raw mode by Liner's
+// action, therefore to restore the terminal to its previous state,
+// GomCLI.Close() needs to be called.
 func New() *GomCLI {
 	c := &GomCLI{}
 	c.prompt = "gomcli > "
@@ -46,37 +53,50 @@ func New() *GomCLI {
 	return c
 }
 
+// SetPrompt sets the prompt for the CLI. Note that due to Liner's multi-platform
+// nature, colored prompts are not supported.
 func (c *GomCLI) SetPrompt(prompt string) {
 	c.prompt = prompt
 }
 
+// SetCtrlCAborts sets whether Start will return an ErrPromptAborted when Ctrl-C
+// is pressed. The default is false (will not return when Ctrl-C is pressed).
 func (c *GomCLI) SetCtrlCAborts(aborts bool) {
 	c.lr.SetCtrlCAborts(aborts)
 }
 
+// SetNotFoundHandler sets the function that will be called when the provided input
+// does not match any known Command.
 func (c *GomCLI) SetNotFoundHandler(function NotFoundHandler) {
 	c.notFoundHandler = function
 }
 
+// SetHistoryFile sets the path for the command history file. If not set, no history
+// file will be used. The history file has a fixed limit of 1000 entries.
 func (c *GomCLI) SetHistoryFile(path string) {
 	c.histfile = path
 	c.setupHistory()
 }
 
+// AddCommand adds a single Command to the CLI.
 func (c *GomCLI) AddCommand(cmd Command) {
 	c.commands[cmd.Name] = cmd
 }
 
+// SetCommands replaces the current CLI set of Commands by a new slice.
 func (c *GomCLI) SetCommands(cmds []Command) {
+	c.commands = make(map[string]Command)
 	for _, cmd := range cmds {
 		c.commands[cmd.Name] = cmd
 	}
 }
 
+// RemoveCommand removes a specific Command from the CLI by name.
 func (c *GomCLI) RemoveCommand(name string) {
 	delete(c.commands, name)
 }
 
+// Commands retrieves the map with the current list of Commands for the CLI.
 func (c *GomCLI) Commands() map[string]Command {
 	return c.commands
 }
@@ -246,6 +266,8 @@ func splitInlineCommands(userInput string) ([]string, error) {
 	return lines, nil
 }
 
+// StartWithInput starts the CLI by providing initial input that will
+// be split into lines and, if applicable, into commands.
 func (c *GomCLI) StartWithInput(input string) error {
 	if err := c.processInput(input); err != nil {
 		return err
@@ -254,8 +276,11 @@ func (c *GomCLI) StartWithInput(input string) error {
 	return c.Start()
 }
 
+// Start starts the CLI, iteratively displaying the prompt and handling
+// user input until Close is called or an error is returned during user input
+// processing.
 func (c *GomCLI) Start() error {
-	defer c.End()
+	defer c.Close()
 
 	for {
 		if err := c.process(); err != nil {
@@ -269,7 +294,9 @@ func (c *GomCLI) Start() error {
 	}
 }
 
-func (c *GomCLI) End() {
+// Close stops the CLI processing, updating the history file if applicable and
+// resetting the terminal into its previous mode.
+func (c *GomCLI) Close() {
 	c.writeHistory()
 	c.lr.Close()
 }
