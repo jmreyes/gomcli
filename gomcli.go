@@ -27,7 +27,7 @@ var ErrCliCommandNotFound = errors.New("Command not found")
 // NotFoundHandler is a function that indicates gomcli how to handle input
 // that does not match any known Command. If not set, default action is to ignore
 // it. An error can be returned, that will be propagated so that it is returned
-// by Start.
+// by Start, terminating the CLI.
 type NotFoundHandler func(string) error
 
 // GomCLI represents the state of the command-line interface, and is the main
@@ -38,6 +38,7 @@ type GomCLI struct {
 	histfile        string
 	commands        map[string]Command
 	notFoundHandler NotFoundHandler
+	exitOnCmdError  bool
 }
 
 // New initializes a new *GomCLI with sane defaults. Further configuration is
@@ -46,10 +47,11 @@ type GomCLI struct {
 // GomCLI.Close() needs to be called.
 func New() *GomCLI {
 	c := &GomCLI{}
-	c.prompt = "gomcli > "
+	c.prompt = "> "
 	c.commands = make(map[string]Command)
 
 	c.lr = liner.NewLiner()
+	c.lr.SetWordCompleter(c.complete)
 	c.lr.SetTabCompletionStyle(liner.TabPrints)
 
 	return c
@@ -78,6 +80,12 @@ func (c *GomCLI) SetNotFoundHandler(function NotFoundHandler) {
 func (c *GomCLI) SetHistoryFile(path string) {
 	c.histfile = path
 	c.setupHistory()
+}
+
+// SetExitOnCmdError sets whether Start shall be interrupted and return the
+// error as soon as an error unhandled in the Command.ErrHandler is propagated.
+func (c *GomCLI) SetExitOnCmdError(value bool) {
+	c.exitOnCmdError = value
 }
 
 // AddCommand adds a single Command to the CLI.
@@ -146,7 +154,7 @@ func (c *GomCLI) complete(line string, pos int) (head string, comp []string, tai
 		chunk := strings.Join(tokens[:i], " ")
 		if cmd, err := c.getCommand(chunk); err == nil {
 			if i == len(tokens) {
-				return line, cmd.complete(""), tail
+				return strings.TrimSpace(line) + " ", cmd.complete(""), tail
 			}
 			search := tokens[i]
 			return cmd.Name + " ", cmd.complete(search), tail
@@ -165,7 +173,8 @@ func (c *GomCLI) contextualComplete() []string {
 
 func (c *GomCLI) rawCommandCompleter(line string) (res []string) {
 	for _, cmd := range c.contextualComplete() {
-		if strings.HasPrefix(cmd, line) {
+		if strings.HasPrefix(cmd, line) &&
+			len(strings.Split(cmd, " ")) == 1 {
 			res = append(res, cmd)
 		}
 	}
@@ -224,9 +233,15 @@ func (c *GomCLI) processLine(line string) error {
 		}
 
 		if len(tokens) > 1 {
-			return cmd.execute(tokens[i:]...)
+			err = cmd.execute(tokens[i:]...)
+		} else {
+			err = cmd.execute()
 		}
-		return cmd.execute()
+
+		if err != nil && c.exitOnCmdError {
+			return err
+		}
+		return nil
 	}
 
 	if c.notFoundHandler != nil {
@@ -244,20 +259,19 @@ func splitInlineCommands(userInput string) ([]string, error) {
 	lines := []string{}
 	command := []string{}
 
-	for i := 0; i < len(parsed); i++ {
-		element := parsed[i]
-		if len(element) > 1 && element[len(element)-2:] == "\\;" {
-			command = append(command, element)
-		} else if len(element) > 1 && element[len(element)-2:] == ";;" {
+	for _, token := range parsed {
+		if len(token) > 1 && token[len(token)-2:] == "\\;" {
+			command = append(command, token)
+		} else if len(token) > 1 && token[len(token)-2:] == ";;" {
 			return nil, ErrCliCannotParseLine
-		} else if element[len(element)-1:] == ";" {
-			if element[:len(element)-1] != "" {
-				command = append(command, element[:len(element)-1])
+		} else if token[len(token)-1:] == ";" {
+			if token[:len(token)-1] != "" {
+				command = append(command, token[:len(token)-1])
 			}
 			lines = append(lines, strings.Join(command, " "))
 			command = []string{}
 		} else {
-			command = append(command, element)
+			command = append(command, token)
 		}
 	}
 

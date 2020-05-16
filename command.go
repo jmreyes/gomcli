@@ -65,7 +65,7 @@ func (c *Command) handleErr(err error, args []string) error {
 
 func (c *Command) execute(args ...string) error {
 	if c.Function == nil {
-		panic("Execute requires a function!")
+		return nil
 	}
 
 	v := reflect.ValueOf(c.Function)
@@ -78,10 +78,12 @@ func (c *Command) execute(args ...string) error {
 
 	argsLen := len(args)
 	if argsLen < ni {
-		err := c.handleErr(ErrCmdMissingArgs, args)
-		if err != nil {
-			return err
-		}
+		return c.handleErr(ErrCmdMissingArgs, args)
+	}
+
+	if argsLen > ni && c.Completer != nil &&
+		len(c.Completer("")) > 0 {
+		return c.handleErr(ErrCmdInvalidArgs, args)
 	}
 
 	var argTypes []reflect.Type
@@ -93,10 +95,7 @@ func (c *Command) execute(args ...string) error {
 	for i, arg := range args[:ni] {
 		argValue, err := convertStringToType(argTypes[i], arg)
 		if err != nil {
-			err = c.handleErr(err, args)
-			if err != nil {
-				return err
-			}
+			return c.handleErr(err, args)
 		}
 		values = append(values, argValue)
 	}
