@@ -10,20 +10,24 @@ import (
 	"github.com/peterh/liner"
 )
 
+// ErrCliPromptAborted is returned from Start or StartWithInput when the
+// user presses Ctrl-C, if CtrlCAborts was set to true in the Conf struct.
 var ErrCliPromptAborted = errors.New("prompt aborted")
-var ErrCliCommandNotFound = errors.New("command not found")
+
+// ErrCliCannotParseLine is returned from Start or StartWithInput if the
+// input provided could not be be parsed to form command and arguments.
 var ErrCliCannotParseLine = errors.New("cannot parse line")
 
+// ErrCliCommandNotFound is passed to the notFoundHandler function if the input
+// provided does not match any known command.
+var ErrCliCommandNotFound = errors.New("command not found")
+
+// NotFoundHandler indicates gomcli how to handle unknown commands. If not set,
+// unknown commands will be ignored. An error can be returned, that will be
+// propagated so that the Start function returns it.
 type NotFoundHandler func(string) error
 
-type Conf struct {
-	Prompt          string
-	HistFile        string
-	CtrlCAborts     bool
-	NotFoundHandler NotFoundHandler
-}
-
-type CLI struct {
+type GomCLI struct {
 	lr              *liner.State
 	prompt          string
 	histfile        string
@@ -31,52 +35,71 @@ type CLI struct {
 	notFoundHandler NotFoundHandler
 }
 
-func New(conf Conf) *CLI {
-	cli := &CLI{}
-	cli.lr = liner.NewLiner()
+func New() *GomCLI {
+	c := &GomCLI{}
+	c.prompt = "gomcli > "
+	c.commands = make(map[string]Command)
 
-	cli.prompt = conf.Prompt
-	if cli.prompt == "" {
-		cli.prompt = "gomcli > "
+	c.lr = liner.NewLiner()
+	c.lr.SetTabCompletionStyle(liner.TabPrints)
+
+	return c
+}
+
+func (c *GomCLI) SetPrompt(prompt string) {
+	c.prompt = prompt
+}
+
+func (c *GomCLI) SetCtrlCAborts(aborts bool) {
+	c.lr.SetCtrlCAborts(aborts)
+}
+
+func (c *GomCLI) SetNotFoundHandler(function NotFoundHandler) {
+	c.notFoundHandler = function
+}
+
+func (c *GomCLI) SetHistoryFile(path string) {
+	c.histfile = path
+	c.setupHistory()
+}
+
+func (c *GomCLI) AddCommand(cmd Command) {
+	c.commands[cmd.Name] = cmd
+}
+
+func (c *GomCLI) SetCommands(cmds []Command) {
+	for _, cmd := range cmds {
+		c.commands[cmd.Name] = cmd
 	}
-
-	cli.lr.SetCtrlCAborts(conf.CtrlCAborts)
-	cli.lr.SetTabCompletionStyle(liner.TabPrints)
-	cli.lr.SetWordCompleter(cli.complete)
-
-	cli.notFoundHandler = conf.NotFoundHandler
-
-	cli.histfile = conf.HistFile
-	cli.setupHistory()
-
-	cli.commands = make(map[string]Command)
-
-	return cli
 }
 
-func (cli *CLI) AddCommand(command Command) {
-	cli.commands[command.Name] = command
+func (c *GomCLI) RemoveCommand(name string) {
+	delete(c.commands, name)
 }
 
-func (cli *CLI) setupHistory() {
-	if cli.histfile == "" {
+func (c *GomCLI) Commands() map[string]Command {
+	return c.commands
+}
+
+func (c *GomCLI) setupHistory() {
+	if c.histfile == "" {
 		return
 	}
 
-	f, err := os.Open(cli.histfile)
+	f, err := os.Open(c.histfile)
 	if err != nil {
 		return
 	}
-	cli.lr.ReadHistory(f)
+	c.lr.ReadHistory(f)
 	f.Close()
 }
 
-func (cli *CLI) writeHistory() error {
-	if cli.histfile == "" {
+func (c *GomCLI) writeHistory() error {
+	if c.histfile == "" {
 		return nil
 	}
 
-	dirName := filepath.Dir(cli.histfile)
+	dirName := filepath.Dir(c.histfile)
 	if _, err := os.Stat(dirName); err != nil {
 		err := os.MkdirAll(dirName, os.ModePerm)
 		if err != nil {
@@ -84,22 +107,22 @@ func (cli *CLI) writeHistory() error {
 		}
 	}
 
-	f, err := os.Create(cli.histfile)
+	f, err := os.Create(c.histfile)
 	if err != nil {
 		return err
 	}
-	cli.lr.WriteHistory(f)
+	c.lr.WriteHistory(f)
 	f.Close()
 
 	return nil
 }
 
-func (cli *CLI) complete(line string, pos int) (head string, c []string, tail string) {
+func (c *GomCLI) complete(line string, pos int) (head string, comp []string, tail string) {
 	tokens, _ := shlex.Split(line[:pos], false)
 	tail = line[pos:]
 	for i := len(tokens); i > 0; i-- {
 		chunk := strings.Join(tokens[:i], " ")
-		if cmd, err := cli.getCommand(chunk); err == nil {
+		if cmd, err := c.getCommand(chunk); err == nil {
 			if i == len(tokens) {
 				return line, cmd.complete(""), tail
 			}
@@ -107,19 +130,19 @@ func (cli *CLI) complete(line string, pos int) (head string, c []string, tail st
 			return cmd.Name + " ", cmd.complete(search), tail
 		}
 	}
-	return head, cli.rawCommandCompleter(line), tail
+	return head, c.rawCommandCompleter(line), tail
 }
 
-func (cli *CLI) contextualComplete() []string {
-	keys := make([]string, 0, len(cli.commands))
-	for k := range cli.commands {
+func (c *GomCLI) contextualComplete() []string {
+	keys := make([]string, 0, len(c.commands))
+	for k := range c.commands {
 		keys = append(keys, k)
 	}
 	return keys
 }
 
-func (cli *CLI) rawCommandCompleter(line string) (res []string) {
-	for _, cmd := range cli.contextualComplete() {
+func (c *GomCLI) rawCommandCompleter(line string) (res []string) {
+	for _, cmd := range c.contextualComplete() {
 		if strings.HasPrefix(cmd, line) {
 			res = append(res, cmd)
 		}
@@ -127,33 +150,32 @@ func (cli *CLI) rawCommandCompleter(line string) (res []string) {
 	return
 }
 
-func (cli *CLI) getCommand(name string) (*Command, error) {
-	if cmd, ok := cli.commands[name]; ok {
+func (c *GomCLI) getCommand(name string) (*Command, error) {
+	if cmd, ok := c.commands[name]; ok {
 		return &cmd, nil
 	}
 	return nil, ErrCliCommandNotFound
 }
 
-func (cli *CLI) process() error {
-	userInput, err := cli.lr.Prompt(cli.prompt)
+func (c *GomCLI) process() error {
+	userInput, err := c.lr.Prompt(c.prompt)
 	if err != nil {
 		return err
 	}
 
-	cli.lr.AppendHistory(userInput)
+	c.lr.AppendHistory(userInput)
 
-	return cli.processInput(userInput)
+	return c.processInput(userInput)
 }
 
-func (cli *CLI) processInput(input string) error {
-
-	lines, err := cli.splitInlineCommands(input)
+func (c *GomCLI) processInput(input string) error {
+	lines, err := splitInlineCommands(input)
 	if err != nil {
 		return err
 	}
 
 	for _, line := range lines {
-		err := cli.processLine(line)
+		err := c.processLine(line)
 		if err != nil {
 			return err
 		}
@@ -162,10 +184,10 @@ func (cli *CLI) processInput(input string) error {
 	return nil
 }
 
-func (cli *CLI) processLine(line string) error {
+func (c *GomCLI) processLine(line string) error {
 	tokens, err := shlex.Split(line, true)
 	if err != nil {
-		return err
+		return ErrCliCannotParseLine
 	}
 
 	if len(tokens) == 0 {
@@ -174,7 +196,7 @@ func (cli *CLI) processLine(line string) error {
 
 	for i := len(tokens); i > 0; i-- {
 		chunk := strings.Join(tokens[:i], " ")
-		cmd, err := cli.getCommand(chunk)
+		cmd, err := c.getCommand(chunk)
 		if err != nil {
 			continue
 		}
@@ -185,16 +207,16 @@ func (cli *CLI) processLine(line string) error {
 		return cmd.execute()
 	}
 
-	if cli.notFoundHandler != nil {
-		err = cli.notFoundHandler(tokens[0])
+	if c.notFoundHandler != nil {
+		err = c.notFoundHandler(tokens[0])
 	}
 	return err
 }
 
-func (cli *CLI) splitInlineCommands(userInput string) ([]string, error) {
+func splitInlineCommands(userInput string) ([]string, error) {
 	parsed, err := shlex.Split(userInput, false)
 	if err != nil {
-		return nil, err
+		return nil, ErrCliCannotParseLine
 	}
 
 	lines := []string{}
@@ -224,19 +246,19 @@ func (cli *CLI) splitInlineCommands(userInput string) ([]string, error) {
 	return lines, nil
 }
 
-func (cli *CLI) StartWithInput(input string) error {
-	if err := cli.processInput(input); err != nil {
+func (c *GomCLI) StartWithInput(input string) error {
+	if err := c.processInput(input); err != nil {
 		return err
 	}
 
-	return cli.Start()
+	return c.Start()
 }
 
-func (cli *CLI) Start() error {
-	defer cli.End()
+func (c *GomCLI) Start() error {
+	defer c.End()
 
 	for {
-		if err := cli.process(); err != nil {
+		if err := c.process(); err != nil {
 			switch err {
 			case liner.ErrPromptAborted:
 				return ErrCliPromptAborted
@@ -247,7 +269,7 @@ func (cli *CLI) Start() error {
 	}
 }
 
-func (cli *CLI) End() {
-	cli.writeHistory()
-	cli.lr.Close()
+func (c *GomCLI) End() {
+	c.writeHistory()
+	c.lr.Close()
 }
