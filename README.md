@@ -1,10 +1,13 @@
 # gomcli
 
+[![GoDoc](https://godoc.org/github.com/jmreyes/gomcli?status.svg)](https://godoc.org/github.com/jmreyes/gomcli)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jmreyes/gomcli)](https://goreportcard.com/report/github.com/jmreyes/gomcli)
+
 *gomcli* is a simple Go library to help developers build interactive command-line interfaces in the style of [Metasploit Framework](https://www.metasploit.com/)'s *msfconsole*.
 
 It is heavily inspired by [riposte](https://github.com/fwkz/riposte), a similar library for Python (in fact, some chunks of the code are a direct conversion to Go). However, the scope is a bit narrower, since things like output formatting are intentionally left out of the library's functionality.
 
-![render1589661810858](https://user-images.githubusercontent.com/1638459/82129899-b5584080-97c6-11ea-96f8-3e77edbebc06.gif)
+![render1589707015032](https://user-images.githubusercontent.com/1638459/82140586-1d8f3c80-9830-11ea-81ee-1d9f87748275.gif)
 
 It uses the [Liner](https://github.com/peterh/liner) package under the hood. Therefore, many features already come for free, such as tab autocompletion, reverse search history, clear screen...
 
@@ -16,7 +19,7 @@ Instantiate a `GomCLI`, set a custom prompt and you are good to go.
 import "github.com/jmreyes/gomcli"
 
 func main() {
-	cli = gomcli.New()
+	cli := gomcli.New()
 	cli.SetPrompt("myprompt$ ")
 }
 
